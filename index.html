@@ -5,18 +5,39 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tennisuhr Simulation</title>
   <style>
+    * { box-sizing: border-box; }
     body { font-family: system-ui, sans-serif; background:#101418; color:#e6edf3; margin:0; padding:20px; }
     .wrap { max-width: 980px; margin:0 auto; display:grid; gap:18px; }
     .panel { background:#161b22; border:1px solid #30363d; border-radius:14px; padding:16px; }
     .row { display:flex; gap:10px; flex-wrap:wrap; }
-    button { border:1px solid #444c56; background:#21262d; color:#e6edf3; border-radius:10px; padding:10px 12px; cursor:pointer; }
+    button {
+      border:1px solid #444c56; background:#21262d; color:#e6edf3;
+      border-radius:10px; padding:10px 12px; cursor:pointer;
+      min-height: 42px; font-size: 15px;
+      touch-action: manipulation;
+    }
     button:hover { background:#30363d; }
     .green { border-color:#2ea043; }
     .red { border-color:#f85149; }
-    .clock { width:460px; height:460px; margin:auto; display:block; background:#0d1117; border-radius:50%; border:2px solid #444; }
+    .clock {
+      width:min(460px, 92vw);
+      height:min(460px, 92vw);
+      margin:auto; display:block;
+      background:#0d1117; border-radius:50%; border:2px solid #444;
+    }
     .legend { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; font-size:14px; }
     .k { color:#8b949e; }
     code { background:#0d1117; padding:2px 6px; border-radius:6px; }
+
+    @media (max-width: 700px) {
+      body { padding:10px; }
+      .panel { padding:12px; }
+      h2 { font-size: 1.15rem; margin: 0 0 10px 0; }
+      h3 { margin-top: 0; }
+      .row { display:grid; grid-template-columns:1fr; gap:8px; }
+      .row button { width:100%; }
+      .legend { grid-template-columns:1fr; font-size:13px; }
+    }
   </style>
 </head>
 <body>
