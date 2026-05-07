@@ -44,7 +44,10 @@
   <div class="wrap">
     <div class="panel">
       <h2>Tennisuhr (198x Spec) — JavaScript Simulation</h2>
-      <p>T mode (tennis): game points on small hands + set games on large hands. U mode (normal watch): regular time + stopwatch hand.</p>
+      <svg class="clock" id="clock" viewBox="0 0 500 500"></svg>
+    </div>
+
+    <div class="panel">
       <div class="row">
         <button id="switchOpMode">Switch to U mode</button>
         <button id="toggleTennisMode">Tennis mode: NORMAL</button>
@@ -56,10 +59,7 @@
     </div>
 
     <div class="panel">
-      <svg class="clock" id="clock" viewBox="0 0 500 500"></svg>
-    </div>
-
-    <div class="panel">
+      <p>T mode (tennis): game points on small hands + set games on large hands. U mode (normal watch): regular time + stopwatch hand.</p>
       <h3>How to use</h3>
       <div class="legend">
         <div><span class="k">1) Operating modes:</span> <b>T</b> = Tennis scoring display, <b>U</b> = normal watch + stopwatch.</div>
