@@ -53,9 +53,25 @@ const state = {
 const pt = ['0','15','30','40'];
 const $ = (id) => document.getElementById(id);
 
-function cloneState(){ return JSON.parse(JSON.stringify(state)); }
+function cloneState(){
+  // Snapshot only gameplay fields (exclude history to avoid recursive growth)
+  return {
+    mode: state.mode,
+    server: state.server,
+    points: { ...state.points },
+    games: { ...state.games },
+    pendingGameWinner: state.pendingGameWinner
+  };
+}
 function pushHistory(){ state.history.push(cloneState()); if(state.history.length>200) state.history.shift(); }
-function restore(s){ Object.assign(state, s); render(); }
+function restore(s){
+  state.mode = s.mode;
+  state.server = s.server;
+  state.points = { ...s.points };
+  state.games = { ...s.games };
+  state.pendingGameWinner = s.pendingGameWinner;
+  render();
+}
 
 function inTieBreak(){
   return state.games.green===6 && state.games.red===6 && state.mode==='normal';
