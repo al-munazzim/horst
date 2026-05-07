@@ -23,13 +23,14 @@
   <div class="wrap">
     <div class="panel">
       <h2>Tennisuhr (198x Spec) — JavaScript Simulation</h2>
-      <p>Modeled from the PDF behavior: game points on small (seconds) hands, set games on large hands, deuce/advantage logic, tie-break with <code>TB</code> and <code>+12</code>, and service indicator in center.</p>
+      <p>T mode (tennis): game points on small hands + set games on large hands. U mode (normal watch): regular time + stopwatch hand.</p>
       <div class="row">
+        <button id="switchOpMode">Switch to U mode</button>
+        <button id="toggleTennisMode">Tennis mode: NORMAL</button>
         <button class="green" id="greenPoint">Green wins point (1g)</button>
         <button class="red" id="redPoint">Red wins point (2r)</button>
         <button id="undo">Undo last point</button>
-        <button id="toggleMode">Toggle mode: NORMAL</button>
-        <button id="reset">Reset set</button>
+        <button id="reset">Reset</button>
       </div>
     </div>
 
@@ -42,11 +43,13 @@
 
 <script>
 const state = {
-  mode: 'normal', // normal / old
+  operatingMode: 'T', // T (tennis) / U (normal watch)
+  tennisMode: 'normal', // normal / old (tie-break behavior)
   server: 'green',
   points: { green: 0, red: 0 },
   games: { green: 0, red: 0 },
   pendingGameWinner: null,
+  chrono: { running: false, elapsedMs: 0, startedAt: null },
   history: []
 };
 
@@ -54,27 +57,30 @@ const pt = ['0','15','30','40'];
 const $ = (id) => document.getElementById(id);
 
 function cloneState(){
-  // Snapshot only gameplay fields (exclude history to avoid recursive growth)
   return {
-    mode: state.mode,
+    operatingMode: state.operatingMode,
+    tennisMode: state.tennisMode,
     server: state.server,
     points: { ...state.points },
     games: { ...state.games },
-    pendingGameWinner: state.pendingGameWinner
+    pendingGameWinner: state.pendingGameWinner,
+    chrono: { ...state.chrono }
   };
 }
 function pushHistory(){ state.history.push(cloneState()); if(state.history.length>200) state.history.shift(); }
 function restore(s){
-  state.mode = s.mode;
+  state.operatingMode = s.operatingMode;
+  state.tennisMode = s.tennisMode;
   state.server = s.server;
   state.points = { ...s.points };
   state.games = { ...s.games };
   state.pendingGameWinner = s.pendingGameWinner;
+  state.chrono = { ...s.chrono };
   render();
 }
 
 function inTieBreak(){
-  return state.games.green===6 && state.games.red===6 && state.mode==='normal';
+  return state.games.green===6 && state.games.red===6 && state.tennisMode==='normal';
 }
 
 function minToAngle(min){ return (min/60)*360 - 90; }
@@ -84,21 +90,12 @@ function pointToMinute(player){
   const p = state.points[player];
   const o = state.points[player==='green'?'red':'green'];
 
-  if(inTieBreak()){
-    return ((p % 12) * 5) % 60; // hour-like positions on minute ring
-  }
-
-  // game already won, waiting commit
+  if(inTieBreak()) return ((p % 12) * 5) % 60;
   if(state.pendingGameWinner===player) return 55;
-
-  // standard tennis
   if(p<=3 && o<=3 && !(p===3 && o===3)) return [0,15,30,40][p];
-
-  // deuce/adv cycle
-  if(p===o) return 50; // both 50 = deuce
-  if(p===o+1) return 50; // advantage player
-  if(o===p+1) return 40; // opponent has advantage
-
+  if(p===o) return 50;
+  if(p===o+1) return 50;
+  if(o===p+1) return 40;
   return [0,15,30,40][Math.min(p,3)] || 0;
 }
 
@@ -115,59 +112,66 @@ function commitGame(winner){
 function setWonBy(player){
   const a = state.games[player];
   const b = state.games[player==='green'?'red':'green'];
-  if(state.mode==='old') return a>=6 && (a-b)>=2;
+  if(state.tennisMode==='old') return a>=6 && (a-b)>=2;
   if(a===7 && (b===5 || b===6)) return true;
   if(a===6 && b<=4) return true;
   return false;
 }
 
 function scorePoint(player){
+  if(state.operatingMode === 'U') return pressUButton(player);
+
   pushHistory();
   const opp = player==='green' ? 'red' : 'green';
 
-  // second press after game-win indication commits game (spec behavior)
   if(state.pendingGameWinner){
     if(state.pendingGameWinner===player){
       commitGame(player);
-      if(setWonBy(player)) {
-        // next press after set-win in real watch is extra transition;
-        // in this sim we auto-reset set for immediate continued play.
-        state.games.green = 0; state.games.red = 0;
-      }
+      if(setWonBy(player)) state.games.green = state.games.red = 0;
       render();
       return;
     }
-    // pressing opposite while pending winner is shown behaves like correction noop here
     render();
     return;
   }
 
-  // tie-break
   if(inTieBreak()){
     state.points[player]++;
     const a = state.points[player];
     const b = state.points[opp];
-    if(a>=7 && (a-b)>=2){
-      state.pendingGameWinner = player;
-    }
+    if(a>=7 && (a-b)>=2) state.pendingGameWinner = player;
     render();
     return;
   }
 
-  // normal game logic
   state.points[player]++;
   const a = state.points[player], b = state.points[opp];
-
-  if(b<=2 && a===4){
-    state.pendingGameWinner = player; // 40:x -> win shown at 55
-  } else if(a>=4 && b>=4 && (a-b)>=2){
-    state.pendingGameWinner = player; // from advantage cycle
-  }
+  if(b<=2 && a===4) state.pendingGameWinner = player;
+  else if(a>=4 && b>=4 && (a-b)>=2) state.pendingGameWinner = player;
 
   render();
 }
 
+function pressUButton(player){
+  // U mode: simple stopwatch behavior
+  if(player === 'green'){
+    if(!state.chrono.running){
+      state.chrono.running = true;
+      state.chrono.startedAt = Date.now() - state.chrono.elapsedMs;
+    } else {
+      state.chrono.elapsedMs = Date.now() - state.chrono.startedAt;
+      state.chrono.running = false;
+      state.chrono.startedAt = null;
+    }
+  } else {
+    // red button resets stopwatch when stopped
+    if(!state.chrono.running) state.chrono.elapsedMs = 0;
+  }
+  render();
+}
+
 function undo(){
+  if(state.operatingMode !== 'T') return;
   if(state.history.length<2) return;
   state.history.pop();
   const prev = state.history[state.history.length-1];
@@ -175,12 +179,19 @@ function undo(){
 }
 
 function reset(){
-  state.server='green'; state.points.green=0; state.points.red=0;
-  state.games.green=0; state.games.red=0; state.pendingGameWinner=null;
-  state.history=[]; pushHistory(); render();
+  if(state.operatingMode === 'T'){
+    state.server='green'; state.points.green=0; state.points.red=0;
+    state.games.green=0; state.games.red=0; state.pendingGameWinner=null;
+    state.history=[]; pushHistory();
+  } else {
+    state.chrono.running = false;
+    state.chrono.elapsedMs = 0;
+    state.chrono.startedAt = null;
+  }
+  render();
 }
 
-function drawHand(svg,cx,cy,len,angle,color,width,label){
+function drawHand(svg,cx,cy,len,angle,color,width){
   const rad = angle*Math.PI/180;
   const x = cx + Math.cos(rad)*len;
   const y = cy + Math.sin(rad)*len;
@@ -192,12 +203,7 @@ function drawHand(svg,cx,cy,len,angle,color,width,label){
   svg.appendChild(line);
 }
 
-function renderClock(){
-  const svg = $('clock');
-  svg.innerHTML='';
-  const cx=250, cy=250;
-
-  // dial
+function drawDial(svg,cx,cy){
   const face = document.createElementNS('http://www.w3.org/2000/svg','circle');
   face.setAttribute('cx',cx); face.setAttribute('cy',cy); face.setAttribute('r',220);
   face.setAttribute('fill','#0d1117'); face.setAttribute('stroke','#8b949e'); face.setAttribute('stroke-width','2');
@@ -213,44 +219,66 @@ function renderClock(){
     svg.appendChild(l);
   }
 
-  // labels 12/3/6/9
   [['12',250,52],['3',446,255],['6',250,452],['9',54,255]].forEach(([t,x,y])=>{
     const el=document.createElementNS('http://www.w3.org/2000/svg','text');
     el.textContent=t; el.setAttribute('x',x); el.setAttribute('y',y);
     el.setAttribute('fill','#c9d1d9'); el.setAttribute('font-size','22'); el.setAttribute('text-anchor','middle');
     svg.appendChild(el);
   });
+}
 
-  // tie-break markers
-  if(inTieBreak()){
-    const tb=document.createElementNS('http://www.w3.org/2000/svg','text');
-    tb.textContent='TB'; tb.setAttribute('x',178); tb.setAttribute('y',85);
-    tb.setAttribute('fill','#58a6ff'); tb.setAttribute('font-size','20'); tb.setAttribute('font-weight','700');
-    svg.appendChild(tb);
+function renderClock(){
+  const svg = $('clock');
+  svg.innerHTML='';
+  const cx=250, cy=250;
+  drawDial(svg,cx,cy);
 
-    const max = Math.max(state.points.green,state.points.red);
-    if(max>=12){
-      const p12=document.createElementNS('http://www.w3.org/2000/svg','text');
-      p12.textContent='+12'; p12.setAttribute('x',312); p12.setAttribute('y',85);
-      p12.setAttribute('fill','#58a6ff'); p12.setAttribute('font-size','18'); p12.setAttribute('font-weight','700');
-      svg.appendChild(p12);
+  if(state.operatingMode === 'T'){
+    if(inTieBreak()){
+      const tb=document.createElementNS('http://www.w3.org/2000/svg','text');
+      tb.textContent='TB'; tb.setAttribute('x',178); tb.setAttribute('y',85);
+      tb.setAttribute('fill','#58a6ff'); tb.setAttribute('font-size','20'); tb.setAttribute('font-weight','700');
+      svg.appendChild(tb);
+
+      const max = Math.max(state.points.green,state.points.red);
+      if(max>=12){
+        const p12=document.createElementNS('http://www.w3.org/2000/svg','text');
+        p12.textContent='+12'; p12.setAttribute('x',312); p12.setAttribute('y',85);
+        p12.setAttribute('fill','#58a6ff'); p12.setAttribute('font-size','18'); p12.setAttribute('font-weight','700');
+        svg.appendChild(p12);
+      }
     }
+
+    drawHand(svg,cx,cy,135,hourToAngle(setToHour(state.games.green)),'#2ea043',8);
+    drawHand(svg,cx,cy,135,hourToAngle(setToHour(state.games.red)),'#f85149',8);
+    drawHand(svg,cx,cy,190,minToAngle(pointToMinute('green')),'#2ea043',4);
+    drawHand(svg,cx,cy,190,minToAngle(pointToMinute('red')),'#f85149',4);
+
+    const center = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    center.setAttribute('cx',cx); center.setAttribute('cy',cy); center.setAttribute('r',14);
+    center.setAttribute('fill', state.server==='green' ? '#2ea043' : '#f85149');
+    center.setAttribute('stroke','#111'); center.setAttribute('stroke-width','2');
+    svg.appendChild(center);
+  } else {
+    // U mode
+    const now = new Date();
+    const hour = now.getHours()%12 + now.getMinutes()/60;
+    const minute = now.getMinutes() + now.getSeconds()/60;
+    const second = now.getSeconds() + now.getMilliseconds()/1000;
+
+    const elapsed = state.chrono.running ? (Date.now() - state.chrono.startedAt) : state.chrono.elapsedMs;
+    const chronoSec = (elapsed/1000) % 60;
+
+    drawHand(svg,cx,cy,120,hourToAngle(hour),'#8b949e',9);     // hour
+    drawHand(svg,cx,cy,165,minToAngle(minute),'#2ea043',7);    // minute (green)
+    drawHand(svg,cx,cy,188,minToAngle(second),'#58a6ff',3);    // running seconds
+    drawHand(svg,cx,cy,178,minToAngle(chronoSec),'#f85149',4); // stopwatch seconds (red)
+
+    const center = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    center.setAttribute('cx',cx); center.setAttribute('cy',cy); center.setAttribute('r',10);
+    center.setAttribute('fill', '#111'); center.setAttribute('stroke','#666'); center.setAttribute('stroke-width','2');
+    svg.appendChild(center);
   }
-
-  // big hands = set games
-  drawHand(svg,cx,cy,135,hourToAngle(setToHour(state.games.green)),'#2ea043',8,'set-green');
-  drawHand(svg,cx,cy,135,hourToAngle(setToHour(state.games.red)),'#f85149',8,'set-red');
-
-  // small hands = game points
-  drawHand(svg,cx,cy,190,minToAngle(pointToMinute('green')),'#2ea043',4,'pt-green');
-  drawHand(svg,cx,cy,190,minToAngle(pointToMinute('red')),'#f85149',4,'pt-red');
-
-  // center service indicator
-  const center = document.createElementNS('http://www.w3.org/2000/svg','circle');
-  center.setAttribute('cx',cx); center.setAttribute('cy',cy); center.setAttribute('r',14);
-  center.setAttribute('fill', state.server==='green' ? '#2ea043' : '#f85149');
-  center.setAttribute('stroke','#111'); center.setAttribute('stroke-width','2');
-  svg.appendChild(center);
 }
 
 function logicalScore(){
@@ -272,30 +300,53 @@ function logicalScore(){
 }
 
 function renderStatus(){
-  $('status').innerHTML = `
-    <div><span class="k">Mode:</span> <b>${state.mode.toUpperCase()}</b></div>
-    <div><span class="k">Set games:</span> <b>${state.games.green} : ${state.games.red}</b></div>
-    <div><span class="k">Game score:</span> <b>${logicalScore()}</b></div>
-    <div><span class="k">Server:</span> <b>${state.server}</b></div>
-    <div><span class="k">Pending commit:</span> <b>${state.pendingGameWinner || 'none'}</b></div>
-    <div><span class="k">Tie-break:</span> <b>${inTieBreak() ? 'ON' : 'OFF'}</b></div>
-  `;
+  if(state.operatingMode === 'T'){
+    $('status').innerHTML = `
+      <div><span class="k">Operating mode:</span> <b>T (Tennis)</b></div>
+      <div><span class="k">Tennis mode:</span> <b>${state.tennisMode.toUpperCase()}</b></div>
+      <div><span class="k">Set games:</span> <b>${state.games.green} : ${state.games.red}</b></div>
+      <div><span class="k">Game score:</span> <b>${logicalScore()}</b></div>
+      <div><span class="k">Server:</span> <b>${state.server}</b></div>
+      <div><span class="k">Pending commit:</span> <b>${state.pendingGameWinner || 'none'}</b></div>
+      <div><span class="k">Tie-break:</span> <b>${inTieBreak() ? 'ON' : 'OFF'}</b></div>
+    `;
+  } else {
+    const elapsed = state.chrono.running ? (Date.now() - state.chrono.startedAt) : state.chrono.elapsedMs;
+    const sec = Math.floor(elapsed/1000)%60;
+    const min = Math.floor(elapsed/60000)%60;
+    const hrs = Math.floor(elapsed/3600000);
+    $('status').innerHTML = `
+      <div><span class="k">Operating mode:</span> <b>U (Normal watch)</b></div>
+      <div><span class="k">Chronograph:</span> <b>${state.chrono.running ? 'RUNNING' : 'STOPPED'}</b></div>
+      <div><span class="k">Chrono time:</span> <b>${String(hrs).padStart(2,'0')}:${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}</b></div>
+      <div><span class="k">Buttons:</span> <b>1g start/stop, 2r reset (when stopped)</b></div>
+    `;
+  }
 }
 
-function render(){ renderClock(); renderStatus(); }
+function render(){
+  $('switchOpMode').textContent = state.operatingMode === 'T' ? 'Switch to U mode' : 'Switch to T mode';
+  $('toggleTennisMode').textContent = `Tennis mode: ${state.tennisMode.toUpperCase()}`;
+  renderClock();
+  renderStatus();
+}
 
 $('greenPoint').onclick = ()=>scorePoint('green');
 $('redPoint').onclick = ()=>scorePoint('red');
 $('undo').onclick = undo;
 $('reset').onclick = reset;
-$('toggleMode').onclick = ()=>{
-  state.mode = state.mode==='normal' ? 'old' : 'normal';
-  $('toggleMode').textContent = `Toggle mode: ${state.mode.toUpperCase()}`;
+$('switchOpMode').onclick = ()=>{
+  state.operatingMode = state.operatingMode === 'T' ? 'U' : 'T';
+  render();
+};
+$('toggleTennisMode').onclick = ()=>{
+  state.tennisMode = state.tennisMode==='normal' ? 'old' : 'normal';
   render();
 };
 
 pushHistory();
 render();
+setInterval(()=>{ if(state.operatingMode==='U' || state.chrono.running) render(); }, 200);
 </script>
 </body>
 </html>
