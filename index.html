@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tennisuhr Simulation</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#101418; color:#e6edf3; margin:0; padding:20px; }
+    .wrap { max-width: 980px; margin:0 auto; display:grid; gap:18px; }
+    .panel { background:#161b22; border:1px solid #30363d; border-radius:14px; padding:16px; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; }
+    button { border:1px solid #444c56; background:#21262d; color:#e6edf3; border-radius:10px; padding:10px 12px; cursor:pointer; }
+    button:hover { background:#30363d; }
+    .green { border-color:#2ea043; }
+    .red { border-color:#f85149; }
+    .clock { width:460px; height:460px; margin:auto; display:block; background:#0d1117; border-radius:50%; border:2px solid #444; }
+    .legend { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; font-size:14px; }
+    .k { color:#8b949e; }
+    code { background:#0d1117; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h2>Tennisuhr (198x Spec) — JavaScript Simulation</h2>
+      <p>Modeled from the PDF behavior: game points on small (seconds) hands, set games on large hands, deuce/advantage logic, tie-break with <code>TB</code> and <code>+12</code>, and service indicator in center.</p>
+      <div class="row">
+        <button class="green" id="greenPoint">Green wins point (1g)</button>
+        <button class="red" id="redPoint">Red wins point (2r)</button>
+        <button id="undo">Undo last point</button>
+        <button id="toggleMode">Toggle mode: NORMAL</button>
+        <button id="reset">Reset set</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <svg class="clock" id="clock" viewBox="0 0 500 500"></svg>
+    </div>
+
+    <div class="panel legend" id="status"></div>
+  </div>
+
+<script>
+const state = {
+  mode: 'normal', // normal / old
+  server: 'green',
+  points: { green: 0, red: 0 },
+  games: { green: 0, red: 0 },
+  pendingGameWinner: null,
+  history: []
+};
+
+const pt = ['0','15','30','40'];
+const $ = (id) => document.getElementById(id);
+
+function cloneState(){ return JSON.parse(JSON.stringify(state)); }
+function pushHistory(){ state.history.push(cloneState()); if(state.history.length>200) state.history.shift(); }
+function restore(s){ Object.assign(state, s); render(); }
+
+function inTieBreak(){
+  return state.games.green===6 && state.games.red===6 && state.mode==='normal';
+}
+
+function minToAngle(min){ return (min/60)*360 - 90; }
+function hourToAngle(h){ return (h%12)/12*360 - 90; }
+
+function pointToMinute(player){
+  const p = state.points[player];
+  const o = state.points[player==='green'?'red':'green'];
+
+  if(inTieBreak()){
+    return ((p % 12) * 5) % 60; // hour-like positions on minute ring
+  }
+
+  // game already won, waiting commit
+  if(state.pendingGameWinner===player) return 55;
+
+  // standard tennis
+  if(p<=3 && o<=3 && !(p===3 && o===3)) return [0,15,30,40][p];
+
+  // deuce/adv cycle
+  if(p===o) return 50; // both 50 = deuce
+  if(p===o+1) return 50; // advantage player
+  if(o===p+1) return 40; // opponent has advantage
+
+  return [0,15,30,40][Math.min(p,3)] || 0;
+}
+
+function setToHour(g){ return (g % 12); }
+
+function commitGame(winner){
+  state.games[winner] += 1;
+  state.points.green = 0;
+  state.points.red = 0;
+  state.pendingGameWinner = null;
+  state.server = winner==='green' ? 'red' : 'green';
+}
+
+function setWonBy(player){
+  const a = state.games[player];
+  const b = state.games[player==='green'?'red':'green'];
+  if(state.mode==='old') return a>=6 && (a-b)>=2;
+  if(a===7 && (b===5 || b===6)) return true;
+  if(a===6 && b<=4) return true;
+  return false;
+}
+
+function scorePoint(player){
+  pushHistory();
+  const opp = player==='green' ? 'red' : 'green';
+
+  // second press after game-win indication commits game (spec behavior)
+  if(state.pendingGameWinner){
+    if(state.pendingGameWinner===player){
+      commitGame(player);
+      if(setWonBy(player)) {
+        // next press after set-win in real watch is extra transition;
+        // in this sim we auto-reset set for immediate continued play.
+        state.games.green = 0; state.games.red = 0;
+      }
+      render();
+      return;
+    }
+    // pressing opposite while pending winner is shown behaves like correction noop here
+    render();
+    return;
+  }
+
+  // tie-break
+  if(inTieBreak()){
+    state.points[player]++;
+    const a = state.points[player];
+    const b = state.points[opp];
+    if(a>=7 && (a-b)>=2){
+      state.pendingGameWinner = player;
+    }
+    render();
+    return;
+  }
+
+  // normal game logic
+  state.points[player]++;
+  const a = state.points[player], b = state.points[opp];
+
+  if(b<=2 && a===4){
+    state.pendingGameWinner = player; // 40:x -> win shown at 55
+  } else if(a>=4 && b>=4 && (a-b)>=2){
+    state.pendingGameWinner = player; // from advantage cycle
+  }
+
+  render();
+}
+
+function undo(){
+  if(state.history.length<2) return;
+  state.history.pop();
+  const prev = state.history[state.history.length-1];
+  restore(JSON.parse(JSON.stringify(prev)));
+}
+
+function reset(){
+  state.server='green'; state.points.green=0; state.points.red=0;
+  state.games.green=0; state.games.red=0; state.pendingGameWinner=null;
+  state.history=[]; pushHistory(); render();
+}
+
+function drawHand(svg,cx,cy,len,angle,color,width,label){
+  const rad = angle*Math.PI/180;
+  const x = cx + Math.cos(rad)*len;
+  const y = cy + Math.sin(rad)*len;
+  const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+  line.setAttribute('x1',cx); line.setAttribute('y1',cy);
+  line.setAttribute('x2',x); line.setAttribute('y2',y);
+  line.setAttribute('stroke',color); line.setAttribute('stroke-width',width);
+  line.setAttribute('stroke-linecap','round');
+  svg.appendChild(line);
+}
+
+function renderClock(){
+  const svg = $('clock');
+  svg.innerHTML='';
+  const cx=250, cy=250;
+
+  // dial
+  const face = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  face.setAttribute('cx',cx); face.setAttribute('cy',cy); face.setAttribute('r',220);
+  face.setAttribute('fill','#0d1117'); face.setAttribute('stroke','#8b949e'); face.setAttribute('stroke-width','2');
+  svg.appendChild(face);
+
+  for(let i=0;i<60;i++){
+    const a = (i/60)*Math.PI*2;
+    const r1 = i%5===0?196:206, r2=214;
+    const l = document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1',cx+Math.cos(a)*r1); l.setAttribute('y1',cy+Math.sin(a)*r1);
+    l.setAttribute('x2',cx+Math.cos(a)*r2); l.setAttribute('y2',cy+Math.sin(a)*r2);
+    l.setAttribute('stroke',i%5===0?'#c9d1d9':'#484f58'); l.setAttribute('stroke-width',i%5===0?2:1);
+    svg.appendChild(l);
+  }
+
+  // labels 12/3/6/9
+  [['12',250,52],['3',446,255],['6',250,452],['9',54,255]].forEach(([t,x,y])=>{
+    const el=document.createElementNS('http://www.w3.org/2000/svg','text');
+    el.textContent=t; el.setAttribute('x',x); el.setAttribute('y',y);
+    el.setAttribute('fill','#c9d1d9'); el.setAttribute('font-size','22'); el.setAttribute('text-anchor','middle');
+    svg.appendChild(el);
+  });
+
+  // tie-break markers
+  if(inTieBreak()){
+    const tb=document.createElementNS('http://www.w3.org/2000/svg','text');
+    tb.textContent='TB'; tb.setAttribute('x',178); tb.setAttribute('y',85);
+    tb.setAttribute('fill','#58a6ff'); tb.setAttribute('font-size','20'); tb.setAttribute('font-weight','700');
+    svg.appendChild(tb);
+
+    const max = Math.max(state.points.green,state.points.red);
+    if(max>=12){
+      const p12=document.createElementNS('http://www.w3.org/2000/svg','text');
+      p12.textContent='+12'; p12.setAttribute('x',312); p12.setAttribute('y',85);
+      p12.setAttribute('fill','#58a6ff'); p12.setAttribute('font-size','18'); p12.setAttribute('font-weight','700');
+      svg.appendChild(p12);
+    }
+  }
+
+  // big hands = set games
+  drawHand(svg,cx,cy,135,hourToAngle(setToHour(state.games.green)),'#2ea043',8,'set-green');
+  drawHand(svg,cx,cy,135,hourToAngle(setToHour(state.games.red)),'#f85149',8,'set-red');
+
+  // small hands = game points
+  drawHand(svg,cx,cy,190,minToAngle(pointToMinute('green')),'#2ea043',4,'pt-green');
+  drawHand(svg,cx,cy,190,minToAngle(pointToMinute('red')),'#f85149',4,'pt-red');
+
+  // center service indicator
+  const center = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  center.setAttribute('cx',cx); center.setAttribute('cy',cy); center.setAttribute('r',14);
+  center.setAttribute('fill', state.server==='green' ? '#2ea043' : '#f85149');
+  center.setAttribute('stroke','#111'); center.setAttribute('stroke-width','2');
+  svg.appendChild(center);
+}
+
+function logicalScore(){
+  if(inTieBreak()){
+    const add = Math.max(state.points.green,state.points.red)>=12 ? 12 : 0;
+    return `${state.points.green}:${state.points.red}${add?` (display wraps +${add})`:''}`;
+  }
+
+  const p = (c)=> {
+    if(state.pendingGameWinner===c) return 'GAME*';
+    const me=state.points[c], op=state.points[c==='green'?'red':'green'];
+    if(me>=3 && op>=3){
+      if(me===op) return 'DEUCE';
+      if(me===op+1) return 'AD';
+    }
+    return pt[Math.min(me,3)];
+  };
+  return `${p('green')} : ${p('red')}`;
+}
+
+function renderStatus(){
+  $('status').innerHTML = `
+    <div><span class="k">Mode:</span> <b>${state.mode.toUpperCase()}</b></div>
+    <div><span class="k">Set games:</span> <b>${state.games.green} : ${state.games.red}</b></div>
+    <div><span class="k">Game score:</span> <b>${logicalScore()}</b></div>
+    <div><span class="k">Server:</span> <b>${state.server}</b></div>
+    <div><span class="k">Pending commit:</span> <b>${state.pendingGameWinner || 'none'}</b></div>
+    <div><span class="k">Tie-break:</span> <b>${inTieBreak() ? 'ON' : 'OFF'}</b></div>
+  `;
+}
+
+function render(){ renderClock(); renderStatus(); }
+
+$('greenPoint').onclick = ()=>scorePoint('green');
+$('redPoint').onclick = ()=>scorePoint('red');
+$('undo').onclick = undo;
+$('reset').onclick = reset;
+$('toggleMode').onclick = ()=>{
+  state.mode = state.mode==='normal' ? 'old' : 'normal';
+  $('toggleMode').textContent = `Toggle mode: ${state.mode.toUpperCase()}`;
+  render();
+};
+
+pushHistory();
+render();
+</script>
+</body>
+</html>
